@@ -1,0 +1,13 @@
+{
+  "name": "jjk-glb-pipeline",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Image -> 3D model -> auto-rig -> GLB pipeline using the Meshy AI API",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "generate": "node scripts/meshy-pipeline.mjs"
+  }
+}
