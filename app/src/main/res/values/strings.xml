@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">RigMobile</string>
+    <string name="btn_import">Import Model</string>
+    <string name="btn_autorig">Auto-Rig</string>
+    <string name="btn_adjust">Adjust Joints</string>
+    <string name="btn_preview">Preview Pose</string>
+    <string name="btn_export">Export Rigged .glb</string>
+    <string name="status_no_model">No model loaded. Tap Import Model to begin.</string>
+</resources>

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.RigMobile" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+        <item name="colorPrimary">#FF6D00</item>
+        <item name="colorPrimaryDark">#E65100</item>
+        <item name="colorAccent">#FF6D00</item>
+        <item name="android:windowBackground">#121212</item>
+    </style>
+</resources>
