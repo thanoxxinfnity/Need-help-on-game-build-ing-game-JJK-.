@@ -37,14 +37,29 @@ function loadDotEnv(path = ".env") {
 }
 
 function parseArgs(argv) {
-  const args = { pose: "a-pose", height: 1.7, rig: true, modelType: "standard", textureResolution: "2k" };
+  // Defaults are tuned for max realism: ultra_mode geometry + 4k PBR textures.
+  const args = {
+    pose: "a-pose",
+    height: 1.7,
+    rig: true,
+    modelType: "standard",
+    textureResolution: "4k",
+    aiModel: "latest",
+    ultra: true,
+    topology: "triangle",
+    polycount: undefined,
+  };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--no-rig") args.rig = false;
+    else if (a === "--no-ultra") args.ultra = false;
     else if (a === "--pose") args.pose = argv[++i];
     else if (a === "--height") args.height = Number(argv[++i]);
     else if (a === "--model-type") args.modelType = argv[++i];
     else if (a === "--texture-resolution") args.textureResolution = argv[++i];
+    else if (a === "--ai-model") args.aiModel = argv[++i];
+    else if (a === "--topology") args.topology = argv[++i];
+    else if (a === "--polycount") args.polycount = Number(argv[++i]);
   }
   return args;
 }
@@ -142,9 +157,15 @@ async function processImage(imagePath, apiKey, args) {
   const createRes = await apiPost("/image-to-3d", apiKey, {
     image_url: dataUri,
     model_type: args.modelType,
+    ai_model: args.aiModel,
+    ultra_mode: args.ultra,
     should_texture: true,
     enable_pbr: true,
     texture_resolution: args.textureResolution,
+    image_enhancement: true,
+    should_remesh: true,
+    topology: args.topology,
+    ...(args.polycount ? { target_polycount: args.polycount } : {}),
     pose_mode: args.pose,
   });
   const modelTaskId = createRes.result;
@@ -209,7 +230,10 @@ async function main() {
     process.exit(1);
   }
 
-  console.log(`Found ${files.length} image(s). rig=${args.rig} pose=${args.pose} height=${args.height}m`);
+  console.log(
+    `Found ${files.length} image(s). rig=${args.rig} pose=${args.pose} height=${args.height}m ` +
+      `ultra=${args.ultra} texture=${args.textureResolution} ai_model=${args.aiModel}`
+  );
 
   const failures = [];
   for (const file of files) {
