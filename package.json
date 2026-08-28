@@ -3,11 +3,12 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "Image -> 3D model -> auto-rig -> GLB pipeline using the Meshy AI API",
+  "description": "Image -> 3D model -> auto-rig -> GLB pipeline using the Tripo AI / Meshy AI APIs",
   "engines": {
     "node": ">=18"
   },
   "scripts": {
-    "generate": "node scripts/meshy-pipeline.mjs"
+    "generate": "node scripts/meshy-pipeline.mjs",
+    "generate:tripo": "node scripts/tripo-pipeline.mjs"
   }
 }

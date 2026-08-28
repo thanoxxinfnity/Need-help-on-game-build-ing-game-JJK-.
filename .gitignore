@@ -2,4 +2,6 @@ node_modules/
 .env
 output/*
 !output/.gitkeep
+images/*
+!images/.gitkeep
 *.log

@@ -1,24 +1,52 @@
 # JJK Game — Image → 3D Model → Rig → GLB Pipeline
 
-Ye script tere character reference images leta hai, [Meshy AI](https://www.meshy.ai)
-ke API se unka 3D model banata hai, humanoid characters ko auto-rig karta hai
-(skeleton + basic walk/run animations), aur sab kuch `.glb` format mein
-`output/` folder mein save kar deta hai — seedha Unity/Unreal/Godot/Three.js
-mein import karne ke liye ready.
+Ye scripts tere character reference images lete hain, AI se unka 3D model
+banate hain, humanoid characters ko auto-rig karte hain (skeleton + walk/run
+animations), aur sab kuch `.glb` format mein `output/` folder mein save kar
+dete hain — seedha Unity/Unreal/Godot/Three.js mein import karne ke liye ready.
 
-## Setup
+Do provider pipelines hain — jiska bhi API key/credits available ho wo use karo:
+
+- **`scripts/tripo-pipeline.mjs`** — [Tripo AI](https://www.tripo3d.ai)
+- **`scripts/meshy-pipeline.mjs`** — [Meshy AI](https://www.meshy.ai)
+
+## Setup — Tripo AI
 
 1. Node.js 18+ install hona chahiye.
-2. Apni Meshy API key lo: https://app.meshy.ai → Settings → API Access.
-3. `.env.example` ko `.env` mein copy karo aur key daalo:
-   ```
-   cp .env.example .env
-   ```
-   phir `.env` mein `MESHY_API_KEY=...` set karo.
+2. Apni Tripo API key lo: https://platform.tripo3d.ai/api-keys (key `tsk_` se start hoti hai).
+   **Zaroori:** us account mein credits/subscription honi chahiye — balance
+   0 hone par task creation `403 / insufficient credit` error dega (chahe
+   API se try karo ya studio.tripo3d.ai website se, dono same account
+   balance use karte hain).
+3. `.env.example` ko `.env` mein copy karo aur `TRIPO_API_KEY=tsk_...` set karo.
 4. `images/` folder mein apne character reference images daalo (`.png`, `.jpg`, `.jpeg`, `.webp`).
-   - Best result ke liye: clean background, poora character front-facing, ek image = ek character.
+   - Best result ke liye: clean background, poora character front-facing (A-pose ya T-pose), ek image = ek character.
 
-## Run
+### Run
+
+```bash
+npm run generate:tripo
+```
+
+Options:
+
+```bash
+npm run generate:tripo -- --no-rig                  # sirf model, rig mat karo
+npm run generate:tripo -- --no-animations           # rig karo lekin walk/run animation skip karo
+npm run generate:tripo -- --animations walk,run,idle,jump   # kaunse preset animations chahiye
+npm run generate:tripo -- --model-version P1-20260311        # flagship (mehenga, sabse realistic)
+npm run generate:tripo -- --model-version v2.5-20250123       # sasta/default, kam credits
+npm run generate:tripo -- --texture-quality standard          # standard | detailed (default)
+npm run generate:tripo -- --rig-type quadruped                # biped (default) | quadruped | avian | ...
+```
+
+## Setup — Meshy AI (alternative)
+
+1. Apni Meshy API key lo: https://app.meshy.ai → Settings → API Access.
+2. `.env` mein `MESHY_API_KEY=...` bhi set kar sakte ho (dono keys ek hi `.env` mein rakh sakte ho).
+3. `images/` wahi folder use hota hai.
+
+### Run
 
 ```bash
 npm run generate
@@ -47,11 +75,11 @@ npm run generate -- --polycount 100000       # target face count (remesh phase)
 
 ## Notes
 
-- Auto-rigging sirf **standard humanoid (bipedal)** characters ke liye achhe se kaam karta hai — Meshy ki apni limitation hai.
-- Har image sequentially process hoti hai (Meshy account ke concurrent-task limits se bachne ke liye). Bahut saare images ho toh script ko chalta chhod do, ye apne aap loop karega aur end mein pass/fail summary dega.
-- `.env` kabhi commit mat karna — wo already `.gitignore` mein hai.
-- Agar rigging response ka format kabhi change ho jaaye, to script `output/<name>/rigging_raw_response.json` mein raw response dump kar dega taaki debug ho sake.
-- `--texture-resolution 8k` aur `--ultra` dono zyada Meshy credits use karte hain — agar credits limited hain toh pehle 1-2 test character generate karke check kar lena.
+- Auto-rigging sirf **standard humanoid (bipedal)** characters ke liye achhe se kaam karta hai — dono providers ki apni limitation hai.
+- Har image sequentially process hoti hai (account ke concurrent-task limits se bachne ke liye). Bahut saare images ho toh script ko chalta chhod do, ye apne aap loop karega aur end mein pass/fail summary dega.
+- `.env` kabhi commit mat karna — wo already `.gitignore` mein hai. `images/` folder bhi gitignored hai (character reference art commit nahi hoti) — sirf `output/` mein bane GLB files apne paas rakho.
+- Agar rigging/model response ka format kabhi change ho jaaye, to script `output/<name>/*_raw_response.json` mein raw response dump kar dega taaki debug ho sake.
+- Higher quality settings (Tripo ka `P1-20260311` model, Meshy ka `--texture-resolution 8k`/`--ultra`) zyada credits use karte hain — agar credits limited hain toh pehle 1-2 test character generate karke check kar lena.
 
 ## Cloth / cape "wave" effect in Godot
 
