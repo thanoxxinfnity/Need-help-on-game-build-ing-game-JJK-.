@@ -17,11 +17,15 @@ object FKPose {
 
         val fingerJoint = Regex("(Thumb|Index|Middle|Ring|Pinky)\\d")
 
+        // Kept modest on purpose: a long shin/forearm segment rotated a large angle sweeps a
+        // huge arc (a 60° knee bend on a shin that's ~20% of body height moves the foot over
+        // a meter). This is meant as a gentle "does the skin follow the bones" sanity check,
+        // not a stress test — big angles made correctly-skinned meshes look broken.
         fun localRotationFor(name: String): Mat4 = when {
-            name.contains("ForeArm") -> Mat4.rotationX(55f)
-            name.contains("Leg") && !name.contains("UpLeg") -> Mat4.rotationX(-60f)
-            name == "Head" -> Mat4.rotationY(12f)
-            fingerJoint.containsMatchIn(name) -> Mat4.rotationX(35f)
+            name.contains("ForeArm") -> Mat4.rotationX(25f)
+            name.contains("Leg") && !name.contains("UpLeg") -> Mat4.rotationX(-25f)
+            name == "Head" -> Mat4.rotationY(10f)
+            fingerJoint.containsMatchIn(name) -> Mat4.rotationX(20f)
             else -> Mat4.identity()
         }
 

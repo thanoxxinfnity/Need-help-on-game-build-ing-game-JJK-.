@@ -143,7 +143,12 @@ class MainActivity : AppCompatActivity() {
         }
         try {
             val skin = AutoSkinner.computeWeights(mesh, skeleton)
-            val glb = GlbExporter.export(mesh, skeleton, skin)
+            val textureMax = when (binding.spinnerTextureRes.selectedItemPosition) {
+                1 -> 2048
+                2 -> 4096
+                else -> null
+            }
+            val glb = GlbExporter.export(mesh, skeleton, skin, textureMax)
             contentResolver.openOutputStream(uri)?.use { it.write(glb) }
             binding.statusText.text = "Exported rigged .glb (${glb.size / 1024} KB). Import it into your game engine."
             Toast.makeText(this, "Export complete", Toast.LENGTH_SHORT).show()

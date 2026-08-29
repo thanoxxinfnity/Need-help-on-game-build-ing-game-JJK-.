@@ -1,5 +1,6 @@
 package com.jjk.rigmobile.export
 
+import android.graphics.Bitmap
 import com.jjk.rigmobile.model.Mesh
 import com.jjk.rigmobile.rig.SkinWeights
 import com.jjk.rigmobile.rig.Skeleton
@@ -8,6 +9,7 @@ import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import kotlin.math.max
 
 /**
  * Writes a rigged mesh out as a self-contained binary glTF 2.0 (.glb): geometry,
@@ -24,7 +26,13 @@ object GlbExporter {
     private const val ARRAY_BUFFER = 34962
     private const val ELEMENT_ARRAY_BUFFER = 34963
 
-    fun export(mesh: Mesh, skeleton: Skeleton, skin: SkinWeights): ByteArray {
+    /**
+     * @param textureMaxDimension if set, downscales (never upscales) each texture so its
+     *   longer side is at most this many pixels before embedding it in the export. This is
+     *   plain interpolation resizing — it does not add detail beyond the source texture,
+     *   it only trades file size for sharpness. Left null to export textures unchanged.
+     */
+    fun export(mesh: Mesh, skeleton: Skeleton, skin: SkinWeights, textureMaxDimension: Int? = null): ByteArray {
         val bin = ByteArrayOutputStream()
         val bufferViews = JSONArray()
         val accessors = JSONArray()
@@ -86,24 +94,62 @@ object GlbExporter {
         val normalAccessor = addFloatAccessor(mesh.normals, 3, "VEC3", ARRAY_BUFFER)
         val uvAccessor = addFloatAccessor(mesh.uvs, 2, "VEC2", ARRAY_BUFFER)
 
-        val indexAccessor: Int
+        // Whole index buffer written once; each mesh part gets its own accessor pointing at a
+        // sub-range of the same bufferView (valid per spec, avoids duplicating index data).
+        val useShortIndices = mesh.vertexCount <= 65535
+        val bytesPerIndex = if (useShortIndices) 2 else 4
+        val indexBufferViewIndex: Int
         run {
             pad4(bin)
             val byteOffset = bin.size()
-            val useShort = mesh.vertexCount <= 65535
-            val bb = ByteBuffer.allocate(mesh.indices.size * (if (useShort) 2 else 4)).order(ByteOrder.LITTLE_ENDIAN)
-            for (idx in mesh.indices) if (useShort) bb.putShort(idx.toShort()) else bb.putInt(idx)
+            val bb = ByteBuffer.allocate(mesh.indices.size * bytesPerIndex).order(ByteOrder.LITTLE_ENDIAN)
+            for (idx in mesh.indices) if (useShortIndices) bb.putShort(idx.toShort()) else bb.putInt(idx)
             bin.write(bb.array())
             val bv = JSONObject().put("buffer", 0).put("byteOffset", byteOffset)
                 .put("byteLength", bb.capacity()).put("target", ELEMENT_ARRAY_BUFFER)
             bufferViews.put(bv)
+            indexBufferViewIndex = bufferViews.length() - 1
+        }
+
+        fun addIndexAccessor(indexStart: Int, count: Int): Int {
             val acc = JSONObject()
-                .put("bufferView", bufferViews.length() - 1)
-                .put("componentType", if (useShort) UNSIGNED_SHORT else UNSIGNED_INT)
-                .put("count", mesh.indices.size)
+                .put("bufferView", indexBufferViewIndex)
+                .put("byteOffset", indexStart * bytesPerIndex)
+                .put("componentType", if (useShortIndices) UNSIGNED_SHORT else UNSIGNED_INT)
+                .put("count", count)
                 .put("type", "SCALAR")
             accessors.put(acc)
-            indexAccessor = accessors.length() - 1
+            return accessors.length() - 1
+        }
+
+        // --- Materials / textures (embed each source texture as a JPEG bufferView) ---
+        val imagesJson = JSONArray()
+        val texturesJson = JSONArray()
+        val materialsJson = JSONArray()
+        for (bitmap in mesh.textures) {
+            val toEncode = if (textureMaxDimension != null) downscale(bitmap, textureMaxDimension) else bitmap
+            val jpegBytes = ByteArrayOutputStream().use { out ->
+                toEncode.compress(Bitmap.CompressFormat.JPEG, 92, out)
+                out.toByteArray()
+            }
+            if (toEncode !== bitmap) toEncode.recycle()
+
+            pad4(bin)
+            val byteOffset = bin.size()
+            bin.write(jpegBytes)
+            val bv = JSONObject().put("buffer", 0).put("byteOffset", byteOffset).put("byteLength", jpegBytes.size)
+            bufferViews.put(bv)
+            val imageIndex = imagesJson.length()
+            imagesJson.put(JSONObject().put("bufferView", bufferViews.length() - 1).put("mimeType", "image/jpeg"))
+
+            val textureIndex = texturesJson.length()
+            texturesJson.put(JSONObject().put("source", imageIndex))
+
+            materialsJson.put(
+                JSONObject()
+                    .put("pbrMetallicRoughness", JSONObject().put("baseColorTexture", JSONObject().put("index", textureIndex)))
+                    .put("doubleSided", true)
+            )
         }
 
         // --- Skinning attributes ---
@@ -181,25 +227,30 @@ object GlbExporter {
         root.put("buffers", JSONArray().put(JSONObject().put("byteLength", 0))) // patched below
         root.put("bufferViews", bufferViews)
         root.put("accessors", accessors)
-        root.put(
-            "meshes", JSONArray().put(
-                JSONObject().put(
-                    "primitives", JSONArray().put(
-                        JSONObject()
-                            .put(
-                                "attributes", JSONObject()
-                                    .put("POSITION", positionAccessor)
-                                    .put("NORMAL", normalAccessor)
-                                    .put("TEXCOORD_0", uvAccessor)
-                                    .put("JOINTS_0", jointsAccessor)
-                                    .put("WEIGHTS_0", weightsAccessor)
-                            )
-                            .put("indices", indexAccessor)
-                            .put("mode", 4)
-                    )
-                )
-            )
-        )
+        if (imagesJson.length() > 0) {
+            root.put("images", imagesJson)
+            root.put("textures", texturesJson)
+            root.put("materials", materialsJson)
+        }
+
+        val sharedAttributes = JSONObject()
+            .put("POSITION", positionAccessor)
+            .put("NORMAL", normalAccessor)
+            .put("TEXCOORD_0", uvAccessor)
+            .put("JOINTS_0", jointsAccessor)
+            .put("WEIGHTS_0", weightsAccessor)
+
+        val primitivesJson = JSONArray()
+        val exportParts = mesh.parts.ifEmpty { listOf(com.jjk.rigmobile.model.MeshPart(0, mesh.indices.size, -1)) }
+        for (part in exportParts) {
+            val prim = JSONObject()
+                .put("attributes", sharedAttributes)
+                .put("indices", addIndexAccessor(part.indexStart, part.indexCount))
+                .put("mode", 4)
+            if (part.textureIndex >= 0) prim.put("material", part.textureIndex)
+            primitivesJson.put(prim)
+        }
+        root.put("meshes", JSONArray().put(JSONObject().put("primitives", primitivesJson)))
         root.put(
             "skins", JSONArray().put(
                 JSONObject()
@@ -214,6 +265,16 @@ object GlbExporter {
 
         val jsonBytes = root.toString().toByteArray(Charsets.UTF_8)
         return packGlb(jsonBytes, binBytes)
+    }
+
+    /** Scales [bitmap] down (never up) so its longer side is at most [maxDimension]. */
+    private fun downscale(bitmap: Bitmap, maxDimension: Int): Bitmap {
+        val longSide = max(bitmap.width, bitmap.height)
+        if (longSide <= maxDimension) return bitmap
+        val scale = maxDimension.toFloat() / longSide
+        val w = max(1, (bitmap.width * scale).toInt())
+        val h = max(1, (bitmap.height * scale).toInt())
+        return Bitmap.createScaledBitmap(bitmap, w, h, true)
     }
 
     private fun packGlb(jsonBytes: ByteArray, binBytes: ByteArray): ByteArray {

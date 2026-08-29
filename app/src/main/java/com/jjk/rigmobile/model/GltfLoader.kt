@@ -1,5 +1,7 @@
 package com.jjk.rigmobile.model
 
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.util.Base64
 import com.jjk.rigmobile.math.Mat4
 import com.jjk.rigmobile.math.Vec3
@@ -15,6 +17,8 @@ import java.nio.ByteOrder
  * base64 data URIs (self-contained exports). External .bin references are not
  * resolved, since the app only has a single picked file via SAF. Skinning data
  * on the *source* file is ignored — rigging is this app's job, not the input's.
+ * Base-color textures on the source materials ARE read, so imported models
+ * keep their look in the viewer and in the exported rigged file.
  */
 object GltfLoader {
 
@@ -45,17 +49,15 @@ object GltfLoader {
             }
         }
         requireNotNull(jsonText) { "GLB missing JSON chunk" }
-        return parse(JSONObject(jsonText), listOfNotNull(binChunk).let { bin ->
-            if (bin.isEmpty()) emptyList() else bin
-        }, binChunk)
+        return parse(JSONObject(jsonText), binChunk)
     }
 
     fun loadGltfJson(jsonText: String): Mesh {
         val root = JSONObject(jsonText)
-        return parse(root, emptyList(), null)
+        return parse(root, null)
     }
 
-    private fun parse(root: JSONObject, unused: List<ByteArray>, glbBin: ByteArray?): Mesh {
+    private fun parse(root: JSONObject, glbBin: ByteArray?): Mesh {
         val buffers = ArrayList<ByteArray>()
         val buffersJson = root.optJSONArray("buffers") ?: JSONArray()
         for (i in 0 until buffersJson.length()) {
@@ -76,7 +78,57 @@ object GltfLoader {
         val meshesJson = root.optJSONArray("meshes") ?: JSONArray()
         val nodesJson = root.optJSONArray("nodes") ?: JSONArray()
         val scenesJson = root.optJSONArray("scenes") ?: JSONArray()
+        val imagesJson = root.optJSONArray("images") ?: JSONArray()
+        val texturesJson = root.optJSONArray("textures") ?: JSONArray()
+        val materialsJson = root.optJSONArray("materials") ?: JSONArray()
         val defaultScene = root.optInt("scene", 0)
+
+        fun bufferViewBytes(bufferViewIndex: Int): ByteArray {
+            val bv = bufferViews.getJSONObject(bufferViewIndex)
+            val buffer = buffers[bv.getInt("buffer")]
+            val offset = bv.optInt("byteOffset", 0)
+            val length = bv.getInt("byteLength")
+            return buffer.copyOfRange(offset, offset + length)
+        }
+
+        // Decode each referenced image once, keyed by glTF image index; drop any that fail
+        // to decode rather than aborting the whole import over one bad/unsupported image.
+        val decodedImages = HashMap<Int, Bitmap>()
+        fun decodeImage(imageIndex: Int): Bitmap? {
+            decodedImages[imageIndex]?.let { return it }
+            val img = imagesJson.getJSONObject(imageIndex)
+            val bytes = if (img.has("bufferView")) {
+                bufferViewBytes(img.getInt("bufferView"))
+            } else {
+                val uri = img.optString("uri", "")
+                if (uri.startsWith("data:")) Base64.decode(uri.substringAfter("base64,"), Base64.DEFAULT) else null
+            } ?: return null
+            val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: return null
+            decodedImages[imageIndex] = bmp
+            return bmp
+        }
+
+        // Materials may share textures/images; keep one Bitmap per distinct texture index in
+        // the OUTPUT list, so re-used textures aren't decoded or uploaded to the GPU twice.
+        val outTextures = ArrayList<Bitmap>()
+        val textureIndexToOutputIndex = HashMap<Int, Int>()
+        fun resolveMaterialTexture(materialIndex: Int): Int {
+            if (materialIndex < 0 || materialIndex >= materialsJson.length()) return -1
+            val mat = materialsJson.getJSONObject(materialIndex)
+            val pbr = mat.optJSONObject("pbrMetallicRoughness") ?: return -1
+            val texRef = pbr.optJSONObject("baseColorTexture") ?: return -1
+            val texIndex = texRef.optInt("index", -1)
+            if (texIndex < 0) return -1
+            textureIndexToOutputIndex[texIndex]?.let { return it }
+            val tex = texturesJson.getJSONObject(texIndex)
+            val imageIndex = tex.optInt("source", -1)
+            if (imageIndex < 0) return -1
+            val bmp = decodeImage(imageIndex) ?: return -1
+            outTextures.add(bmp)
+            val outIndex = outTextures.size - 1
+            textureIndexToOutputIndex[texIndex] = outIndex
+            return outIndex
+        }
 
         fun readFloatAccessor(accessorIndex: Int, componentsPerElement: Int): FloatArray {
             val acc = accessors.getJSONObject(accessorIndex)
@@ -164,6 +216,7 @@ object GltfLoader {
         val outNormals = ArrayList<Float>()
         val outUvs = ArrayList<Float>()
         val outIndices = ArrayList<Int>()
+        val outParts = ArrayList<MeshPart>()
 
         fun appendMesh(meshIndex: Int, worldMatrix: Mat4) {
             val meshObj = meshesJson.getJSONObject(meshIndex)
@@ -203,7 +256,11 @@ object GltfLoader {
                 } else {
                     repeat(positions.size / 3) { outUvs.add(0f); outUvs.add(0f) }
                 }
+
+                val indexStart = outIndices.size
                 for (idx in indices) outIndices.add(vertexBase + idx)
+                val textureIndex = resolveMaterialTexture(prim.optInt("material", -1))
+                outParts.add(MeshPart(indexStart, indices.size, textureIndex))
             }
         }
 
@@ -230,7 +287,9 @@ object GltfLoader {
             outPositions.toFloatArray(),
             outNormals.toFloatArray(),
             outUvs.toFloatArray(),
-            outIndices.toIntArray()
+            outIndices.toIntArray(),
+            outParts,
+            outTextures
         )
     }
 }

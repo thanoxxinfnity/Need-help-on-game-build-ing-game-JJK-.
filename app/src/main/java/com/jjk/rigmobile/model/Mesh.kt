@@ -1,16 +1,24 @@
 package com.jjk.rigmobile.model
 
+import android.graphics.Bitmap
 import com.jjk.rigmobile.math.Vec3
+
+/** A contiguous slice of [Mesh.indices] that should be drawn with [textureIndex] (-1 = untextured). */
+data class MeshPart(val indexStart: Int, val indexCount: Int, val textureIndex: Int)
 
 /**
  * A single imported mesh: flat vertex attribute arrays + triangle indices.
  * Each vertex occupies 3 floats in [positions]/[normals] and 2 in [uvs].
+ * [parts]/[textures] are optional — populated for glTF/GLB imports that carry
+ * baseColor textures; empty for plain OBJ imports (untextured).
  */
 class Mesh(
     val positions: FloatArray,
     val normals: FloatArray,
     val uvs: FloatArray,
-    val indices: IntArray
+    val indices: IntArray,
+    val parts: List<MeshPart> = emptyList(),
+    val textures: List<Bitmap> = emptyList()
 ) {
     val vertexCount: Int get() = positions.size / 3
 

@@ -8,4 +8,10 @@
     <string name="btn_export">Export Rigged .glb</string>
     <string name="check_fingers">Include Fingers</string>
     <string name="status_no_model">No model loaded. Tap Import Model to begin.</string>
+
+    <string-array name="texture_res_options">
+        <item>Texture: Original</item>
+        <item>Texture: 2048px max</item>
+        <item>Texture: 4096px max</item>
+    </string-array>
 </resources>

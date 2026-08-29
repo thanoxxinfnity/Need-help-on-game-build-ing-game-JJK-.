@@ -80,6 +80,13 @@
                     android:textOn="@string/btn_preview"
                     android:textOff="@string/btn_preview" />
 
+                <Spinner
+                    android:id="@+id/spinnerTextureRes"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="center_vertical"
+                    android:entries="@array/texture_res_options" />
+
                 <Button
                     android:id="@+id/btnExport"
                     style="?android:attr/buttonStyleSmall"

@@ -1,7 +1,10 @@
 package com.jjk.rigmobile.gl
 
+import android.graphics.Bitmap
+import android.graphics.Color
 import android.opengl.GLES30
 import android.opengl.GLSurfaceView
+import android.opengl.GLUtils
 import com.jjk.rigmobile.math.Mat4
 import com.jjk.rigmobile.math.Vec3
 import com.jjk.rigmobile.model.Mesh
@@ -19,28 +22,33 @@ private const val MESH_VERTEX_SHADER = """
     #version 300 es
     layout(location = 0) in vec3 aPosition;
     layout(location = 1) in vec3 aNormal;
+    layout(location = 2) in vec2 aUV;
     uniform mat4 uMvp;
     uniform mat4 uModel;
     out vec3 vNormal;
+    out vec2 vUV;
     void main() {
         vNormal = mat3(uModel) * aNormal;
+        vUV = aUV;
         gl_Position = uMvp * vec4(aPosition, 1.0);
     }
 """
 
-private const val MESH_FRAGMENT_SHADER = """
+private const val TEXTURED_FRAGMENT_SHADER = """
     #version 300 es
     precision mediump float;
     in vec3 vNormal;
+    in vec2 vUV;
+    uniform sampler2D uBaseColor;
     out vec4 fragColor;
     void main() {
         vec3 n = normalize(vNormal);
         vec3 lightDir = normalize(vec3(0.4, 0.8, 0.6));
         float diffuse = max(dot(n, lightDir), 0.0);
-        float ambient = 0.35;
-        vec3 base = vec3(0.75, 0.76, 0.8);
-        vec3 color = base * (ambient + diffuse * 0.65);
-        fragColor = vec4(color, 1.0);
+        float ambient = 0.45;
+        vec4 tex = texture(uBaseColor, vUV);
+        vec3 color = tex.rgb * (ambient + diffuse * 0.55);
+        fragColor = vec4(color, tex.a);
     }
 """
 
@@ -71,9 +79,11 @@ private val SKINNED_VERTEX_SHADER = """
     layout(location = 1) in vec3 aNormal;
     layout(location = 2) in vec4 aJoints;
     layout(location = 3) in vec4 aWeights;
+    layout(location = 4) in vec2 aUV;
     uniform mat4 uMvp;
     uniform mat4 uJointMatrices[MAX_BONES];
     out vec3 vNormal;
+    out vec2 vUV;
     void main() {
         ivec4 j = ivec4(aJoints);
         mat4 skinMat =
@@ -83,11 +93,10 @@ private val SKINNED_VERTEX_SHADER = """
             aWeights.w * uJointMatrices[j.w];
         vec4 skinnedPos = skinMat * vec4(aPosition, 1.0);
         vNormal = mat3(skinMat) * aNormal;
+        vUV = aUV;
         gl_Position = uMvp * skinnedPos;
     }
 """
-
-private const val SKINNED_FRAGMENT_SHADER = MESH_FRAGMENT_SHADER
 
 class ModelRenderer : GLSurfaceView.Renderer {
 
@@ -110,6 +119,7 @@ class ModelRenderer : GLSurfaceView.Renderer {
 
     private var vboPositions = 0
     private var vboNormals = 0
+    private var vboUvs = 0
     private var iboIndices = 0
     private var indexCount = 0
     private var indexIsShort = true
@@ -118,6 +128,10 @@ class ModelRenderer : GLSurfaceView.Renderer {
     private var vboWeights = 0
     @Volatile private var skinDirty = false
     @Volatile private var pendingSkin: SkinWeights? = null
+
+    private var fallbackTextureId = 0
+    private var glTextureIds: IntArray = IntArray(0)
+    private var parts: List<com.jjk.rigmobile.model.MeshPart> = emptyList()
 
     /** When set, the mesh is drawn skinned using these per-bone matrices (already poseWorld * inverseBind). */
     @Volatile var jointMatrices: Array<Mat4>? = null
@@ -138,17 +152,20 @@ class ModelRenderer : GLSurfaceView.Renderer {
     override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
         GLES30.glClearColor(0.09f, 0.09f, 0.1f, 1f)
         GLES30.glEnable(GLES30.GL_DEPTH_TEST)
-        meshProgram = ShaderUtil.buildProgram(MESH_VERTEX_SHADER, MESH_FRAGMENT_SHADER)
+        meshProgram = ShaderUtil.buildProgram(MESH_VERTEX_SHADER, TEXTURED_FRAGMENT_SHADER)
         lineProgram = ShaderUtil.buildProgram(LINE_VERTEX_SHADER, LINE_FRAGMENT_SHADER)
-        skinnedProgram = ShaderUtil.buildProgram(SKINNED_VERTEX_SHADER, SKINNED_FRAGMENT_SHADER)
+        skinnedProgram = ShaderUtil.buildProgram(SKINNED_VERTEX_SHADER, TEXTURED_FRAGMENT_SHADER)
 
-        val buffers = IntArray(5)
-        GLES30.glGenBuffers(5, buffers, 0)
+        val buffers = IntArray(6)
+        GLES30.glGenBuffers(6, buffers, 0)
         vboPositions = buffers[0]
         vboNormals = buffers[1]
         iboIndices = buffers[2]
         vboJoints = buffers[3]
         vboWeights = buffers[4]
+        vboUvs = buffers[5]
+
+        fallbackTextureId = createSolidWhiteTexture()
     }
 
     override fun onSurfaceChanged(gl: GL10?, width: Int, height: Int) {
@@ -189,6 +206,24 @@ class ModelRenderer : GLSurfaceView.Renderer {
         }
     }
 
+    private fun textureIdFor(partTextureIndex: Int): Int =
+        if (partTextureIndex in glTextureIds.indices) glTextureIds[partTextureIndex] else fallbackTextureId
+
+    private fun bytesPerIndex(): Int = if (indexIsShort) 2 else 4
+
+    private fun drawPartsIndexed(indexType: Int) {
+        GLES30.glActiveTexture(GLES30.GL_TEXTURE0)
+        if (parts.isEmpty()) {
+            GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, fallbackTextureId)
+            GLES30.glDrawElements(GLES30.GL_TRIANGLES, indexCount, indexType, 0)
+            return
+        }
+        for (part in parts) {
+            GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, textureIdFor(part.textureIndex))
+            GLES30.glDrawElements(GLES30.GL_TRIANGLES, part.indexCount, indexType, part.indexStart * bytesPerIndex())
+        }
+    }
+
     private fun drawStaticMesh(vp: Mat4) {
         val model = Mat4.identity()
         val mvp = vp * model
@@ -196,8 +231,10 @@ class ModelRenderer : GLSurfaceView.Renderer {
         GLES30.glUseProgram(meshProgram)
         val mvpLoc = GLES30.glGetUniformLocation(meshProgram, "uMvp")
         val modelLoc = GLES30.glGetUniformLocation(meshProgram, "uModel")
+        val samplerLoc = GLES30.glGetUniformLocation(meshProgram, "uBaseColor")
         GLES30.glUniformMatrix4fv(mvpLoc, 1, false, mvp.m, 0)
         GLES30.glUniformMatrix4fv(modelLoc, 1, false, model.m, 0)
+        GLES30.glUniform1i(samplerLoc, 0)
 
         GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, vboPositions)
         GLES30.glEnableVertexAttribArray(0)
@@ -207,19 +244,26 @@ class ModelRenderer : GLSurfaceView.Renderer {
         GLES30.glEnableVertexAttribArray(1)
         GLES30.glVertexAttribPointer(1, 3, GLES30.GL_FLOAT, false, 0, 0)
 
+        GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, vboUvs)
+        GLES30.glEnableVertexAttribArray(2)
+        GLES30.glVertexAttribPointer(2, 2, GLES30.GL_FLOAT, false, 0, 0)
+
         GLES30.glBindBuffer(GLES30.GL_ELEMENT_ARRAY_BUFFER, iboIndices)
         val type = if (indexIsShort) GLES30.GL_UNSIGNED_SHORT else GLES30.GL_UNSIGNED_INT
-        GLES30.glDrawElements(GLES30.GL_TRIANGLES, indexCount, type, 0)
+        drawPartsIndexed(type)
 
         GLES30.glDisableVertexAttribArray(0)
         GLES30.glDisableVertexAttribArray(1)
+        GLES30.glDisableVertexAttribArray(2)
     }
 
     private fun drawSkinnedMesh(vp: Mat4) {
         val mats = jointMatrices ?: return
         GLES30.glUseProgram(skinnedProgram)
         val mvpLoc = GLES30.glGetUniformLocation(skinnedProgram, "uMvp")
+        val samplerLoc = GLES30.glGetUniformLocation(skinnedProgram, "uBaseColor")
         GLES30.glUniformMatrix4fv(mvpLoc, 1, false, vp.m, 0)
+        GLES30.glUniform1i(samplerLoc, 0)
 
         val jointsLoc = GLES30.glGetUniformLocation(skinnedProgram, "uJointMatrices")
         val flat = FloatArray(mats.size * 16)
@@ -242,14 +286,19 @@ class ModelRenderer : GLSurfaceView.Renderer {
         GLES30.glEnableVertexAttribArray(3)
         GLES30.glVertexAttribPointer(3, 4, GLES30.GL_FLOAT, false, 0, 0)
 
+        GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, vboUvs)
+        GLES30.glEnableVertexAttribArray(4)
+        GLES30.glVertexAttribPointer(4, 2, GLES30.GL_FLOAT, false, 0, 0)
+
         GLES30.glBindBuffer(GLES30.GL_ELEMENT_ARRAY_BUFFER, iboIndices)
         val type = if (indexIsShort) GLES30.GL_UNSIGNED_SHORT else GLES30.GL_UNSIGNED_INT
-        GLES30.glDrawElements(GLES30.GL_TRIANGLES, indexCount, type, 0)
+        drawPartsIndexed(type)
 
         GLES30.glDisableVertexAttribArray(0)
         GLES30.glDisableVertexAttribArray(1)
         GLES30.glDisableVertexAttribArray(2)
         GLES30.glDisableVertexAttribArray(3)
+        GLES30.glDisableVertexAttribArray(4)
     }
 
     private fun uploadSkin(skin: SkinWeights) {
@@ -311,6 +360,9 @@ class ModelRenderer : GLSurfaceView.Renderer {
         GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, vboNormals)
         GLES30.glBufferData(GLES30.GL_ARRAY_BUFFER, m.normals.size * 4, floatBufferOf(m.normals), GLES30.GL_STATIC_DRAW)
 
+        GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, vboUvs)
+        GLES30.glBufferData(GLES30.GL_ARRAY_BUFFER, m.uvs.size * 4, floatBufferOf(m.uvs), GLES30.GL_STATIC_DRAW)
+
         indexIsShort = m.vertexCount <= 65535
         GLES30.glBindBuffer(GLES30.GL_ELEMENT_ARRAY_BUFFER, iboIndices)
         if (indexIsShort) {
@@ -322,6 +374,10 @@ class ModelRenderer : GLSurfaceView.Renderer {
             GLES30.glBufferData(GLES30.GL_ELEMENT_ARRAY_BUFFER, m.indices.size * 4, intBufferOf(m.indices), GLES30.GL_STATIC_DRAW)
         }
         indexCount = m.indices.size
+        parts = m.parts
+
+        if (glTextureIds.isNotEmpty()) GLES30.glDeleteTextures(glTextureIds.size, glTextureIds, 0)
+        glTextureIds = IntArray(m.textures.size) { createTextureFromBitmap(m.textures[it]) }
 
         // Frame the camera on the newly loaded model.
         val min = m.boundsMin(); val max = m.boundsMax()
@@ -329,6 +385,27 @@ class ModelRenderer : GLSurfaceView.Renderer {
         val size = max(max.x - min.x, max.y - min.y, max.z - min.z)
         camera.target = center
         camera.distance = size * 1.6f + 0.5f
+    }
+
+    private fun createTextureFromBitmap(bitmap: Bitmap): Int {
+        val ids = IntArray(1)
+        GLES30.glGenTextures(1, ids, 0)
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, ids[0])
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MIN_FILTER, GLES30.GL_LINEAR_MIPMAP_LINEAR)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MAG_FILTER, GLES30.GL_LINEAR)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_S, GLES30.GL_REPEAT)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_T, GLES30.GL_REPEAT)
+        GLUtils.texImage2D(GLES30.GL_TEXTURE_2D, 0, bitmap, 0)
+        GLES30.glGenerateMipmap(GLES30.GL_TEXTURE_2D)
+        return ids[0]
+    }
+
+    private fun createSolidWhiteTexture(): Int {
+        val bmp = Bitmap.createBitmap(1, 1, Bitmap.Config.ARGB_8888)
+        bmp.setPixel(0, 0, Color.WHITE)
+        val id = createTextureFromBitmap(bmp)
+        bmp.recycle()
+        return id
     }
 
     private fun max(a: Float, b: Float, c: Float) = kotlin.math.max(a, kotlin.math.max(b, c))
