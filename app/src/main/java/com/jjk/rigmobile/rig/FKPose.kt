@@ -15,10 +15,13 @@ object FKPose {
         val n = skeleton.bones.size
         val poseWorld = arrayOfNulls<Mat4>(n)
 
+        val fingerJoint = Regex("(Thumb|Index|Middle|Ring|Pinky)\\d")
+
         fun localRotationFor(name: String): Mat4 = when {
             name.contains("ForeArm") -> Mat4.rotationX(55f)
             name.contains("Leg") && !name.contains("UpLeg") -> Mat4.rotationX(-60f)
             name == "Head" -> Mat4.rotationY(12f)
+            fingerJoint.containsMatchIn(name) -> Mat4.rotationX(35f)
             else -> Mat4.identity()
         }
 

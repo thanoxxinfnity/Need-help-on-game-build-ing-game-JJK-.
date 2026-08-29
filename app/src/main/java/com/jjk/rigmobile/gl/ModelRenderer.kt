@@ -66,7 +66,7 @@ private const val LINE_FRAGMENT_SHADER = """
 
 private val SKINNED_VERTEX_SHADER = """
     #version 300 es
-    #define MAX_BONES ${AutoRigger.BONE_COUNT}
+    #define MAX_BONES ${AutoRigger.MAX_BONE_COUNT}
     layout(location = 0) in vec3 aPosition;
     layout(location = 1) in vec3 aNormal;
     layout(location = 2) in vec4 aJoints;

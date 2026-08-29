@@ -56,6 +56,14 @@
                     android:enabled="false"
                     android:text="@string/btn_autorig" />
 
+                <CheckBox
+                    android:id="@+id/checkFingers"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="center_vertical"
+                    android:textColor="#FFFFFF"
+                    android:text="@string/check_fingers" />
+
                 <ToggleButton
                     android:id="@+id/btnAdjust"
                     android:layout_width="wrap_content"

@@ -102,7 +102,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun runAutoRig() {
         val mesh = currentMesh ?: return
-        val skeleton = AutoRigger.fit(mesh)
+        val skeleton = AutoRigger.fit(mesh, includeFingers = binding.checkFingers.isChecked)
         currentSkeleton = skeleton
 
         val renderer = binding.glSurfaceView.modelRenderer

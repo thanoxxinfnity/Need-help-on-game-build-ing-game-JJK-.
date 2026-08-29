@@ -6,5 +6,6 @@
     <string name="btn_adjust">Adjust Joints</string>
     <string name="btn_preview">Preview Pose</string>
     <string name="btn_export">Export Rigged .glb</string>
+    <string name="check_fingers">Include Fingers</string>
     <string name="status_no_model">No model loaded. Tap Import Model to begin.</string>
 </resources>

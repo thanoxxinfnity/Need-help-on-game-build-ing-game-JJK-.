@@ -20,7 +20,7 @@ object AutoRigger {
 
     // yFrac/xFrac/zFrac are fractions of (height H / half-width W / depth D) offset from
     // the bounding box's bottom-center. xFrac is signed per-side (mirrored for Left/Right).
-    private val defs = listOf(
+    private val bodyDefs = listOf(
         Def("Hips", null, 0.50f, 0f),
         Def("Spine", "Hips", 0.60f, 0f),
         Def("Spine1", "Spine", 0.68f, 0f),
@@ -49,9 +49,22 @@ object AutoRigger {
         Def("RightToeBase", "RightFoot", 0.01f, -0.10f, 0.15f)
     )
 
-    val BONE_COUNT = defs.size
+    private data class FingerSpec(val name: String, val jointCount: Int, val zFrac: Float, val yDropPerJoint: Float)
 
-    fun fit(mesh: Mesh): Skeleton {
+    // One "column" per finger, spreading front-to-back (zFrac) across the palm;
+    // xFrac grows per-joint to walk out along the finger away from the hand.
+    private val fingerSpecs = listOf(
+        FingerSpec("Thumb", 2, 0.05f, 0.004f),
+        FingerSpec("Index", 3, 0.020f, 0.010f),
+        FingerSpec("Middle", 3, 0.000f, 0.012f),
+        FingerSpec("Ring", 3, -0.020f, 0.010f),
+        FingerSpec("Pinky", 3, -0.038f, 0.008f)
+    )
+
+    /** Fixed uniform-array size for the GPU skinning shader — the worst case (22 body + 14-per-hand fingers x2), regardless of what a given rig actually uses. */
+    const val MAX_BONE_COUNT = 50
+
+    fun fit(mesh: Mesh, includeFingers: Boolean = false): Skeleton {
         val min = mesh.boundsMin()
         val max = mesh.boundsMax()
         val height = (max.y - min.y).coerceAtLeast(1e-4f)
@@ -63,7 +76,8 @@ object AutoRigger {
 
         val nameToIndex = HashMap<String, Int>()
         val bones = ArrayList<Bone>()
-        for (def in defs) {
+
+        fun place(def: Def) {
             val parentIndex = def.parent?.let { nameToIndex.getValue(it) } ?: -1
             val pos = Vec3(
                 centerX + def.xFrac * halfWidth,
@@ -73,6 +87,28 @@ object AutoRigger {
             bones.add(Bone(def.name, parentIndex, pos))
             nameToIndex[def.name] = bones.size - 1
         }
+
+        for (def in bodyDefs) place(def)
+
+        if (includeFingers) {
+            for (side in listOf("Left" to 1f, "Right" to -1f)) {
+                val (sideName, sign) = side
+                val handName = "${sideName}Hand"
+                val handXFrac = if (sideName == "Left") 0.28f else -0.28f
+                val handYFrac = 0.44f
+                for (finger in fingerSpecs) {
+                    var parentName = handName
+                    for (j in 1..finger.jointCount) {
+                        val boneName = "$sideName${finger.name}$j"
+                        val xFrac = handXFrac + sign * (0.02f + j * 0.025f)
+                        val yFrac = handYFrac - j * finger.yDropPerJoint
+                        place(Def(boneName, parentName, yFrac, xFrac, finger.zFrac))
+                        parentName = boneName
+                    }
+                }
+            }
+        }
+
         return Skeleton(bones)
     }
 }
